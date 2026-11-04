@@ -1,0 +1,212 @@
+name: cairn_app
+
+x-logging: &default-logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "3" }
+
+networks:
+  data-net:
+    internal: true          
+  app-net:
+  monitoring-net:
+
+volumes:
+  cairn_database:
+  uploads:
+  embedding-model-cache-dir:
+  prometheus_data:
+  grafana_data:
+  alertmanager_data:
+
+secrets:
+  smtp_password:
+    file: ./secrets/smtp_password.txt
+
+services:
+  #________________________ # service : PostgreSql (PGvectoer)  # _________________________________________
+  cairndatabase:
+    image: pgvector/pgvector:pg16
+    container_name: cairn_pgdatabase
+    restart: unless-stopped
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - pg_stat_statements.track=all
+      - -c
+      - log_min_duration_statement=500
+      - -c
+      - max_connections=200         
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - cairn_database:/var/lib/postgresql/data
+      - ./docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks: [data-net]
+    logging: *default-logging
+
+  #________________________ # service : Application ( FastApi Backend ) # _________________________________________
+  backend:
+    build:
+      context: ../Backend
+      dockerfile: Dockerfile
+    image: cairn-backend:local
+    container_name: cairn_backend
+    restart: unless-stopped
+    env_file:
+      - ../Backend/app/.env              
+    environment:                         
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER}:${POSTGRES_PASSWORD}@cairndatabase:5432/${POSTGRES_DB}
+      EMBEDDING_CACHE_DIR: /app/storage/embeddingcache
+      STORAGE_BASE_PATH: storage/uploads
+    depends_on:
+      cairndatabase:
+        condition: service_healthy
+    volumes:
+      - uploads:/app/storage/uploads
+      - embedding-model-cache-dir:/app/storage/embeddingcache
+    expose: ["8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health/live').status==200 else 1)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 300s               
+    networks: [app-net, data-net, monitoring-net]
+    logging: *default-logging
+
+  #________________________ # service : Nginx  # _________________________________________
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: cairn_nginx
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "80:80"
+    volumes:
+      - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks: [app-net]
+    logging: *default-logging
+
+  #________________________ # service : PostgreSql Exporter ( PostgreSql metrics ) # _________________________________________
+
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.15.0
+    container_name: cairn_pgexporter
+    profiles: [monitoring]
+    restart: unless-stopped
+    command: ["--collector.stat_statements"]
+    environment:
+      DATA_SOURCE_NAME: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@cairndatabase:5432/${POSTGRES_DB}?sslmode=disable
+    depends_on:
+      cairndatabase:
+        condition: service_healthy
+    networks: [data-net, monitoring-net]
+    logging: *default-logging
+
+#________________________ # service : Prometheus  # _________________________________________
+
+  prometheus:
+    image: prom/prometheus:v3.0.1
+    container_name: cairn_prometheus
+    profiles: [monitoring]
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=15d
+      - --web.enable-lifecycle
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./docker/prometheus/rules:/etc/prometheus/rules:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      - alertmanager
+    ports: ["127.0.0.1:9090:9090"]
+    networks: [monitoring-net]
+    logging: *default-logging
+
+#________________________ # service : Alertmanager  # _________________________________________
+
+  alertmanager:
+    image: prom/alertmanager:v0.27.0
+    container_name: cairn_alertmanager
+    profiles: [monitoring]
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      - ./alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager_data:/alertmanager
+    secrets: [smtp_password]
+    ports: ["127.0.0.1:9093:9093"]
+    networks: [monitoring-net]
+    logging: *default-logging
+
+#________________________ # service : Grafana  # _________________________________________
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: cairn_grafana
+    profiles: [monitoring]
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports: ["127.0.0.1:3000:3000"]
+    networks: [monitoring-net, data-net]
+    logging: *default-logging
+
+
+#________________________ # service : Node Exporter ( System metrics ) # _________________________________________
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: cairn_node_exporter
+    profiles: [monitoring]
+    restart: unless-stopped
+    command: ["--path.rootfs=/host"]
+    volumes:
+      - /:/host:ro
+    networks: [monitoring-net]
+    logging: *default-logging
+
+#________________________ # service : cadvisor # _________________________________________
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    container_name: cairn_cadvisor
+    profiles: [monitoring]
+    restart: unless-stopped
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    networks: [monitoring-net]
+    logging: *default-logging

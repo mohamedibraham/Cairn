@@ -1,0 +1,51 @@
+global:
+  smtp_smarthost: "smtp.gmail.com:587"
+  smtp_from: "hhvgshbmdkdhdh88@gmail.com"
+  smtp_auth_username: "hhvgshbmdkdhdh88@gmail.com"
+  smtp_auth_password_file: /run/secrets/smtp_password
+  smtp_require_tls: true
+  resolve_timeout: 5m
+
+route:
+  receiver: email-default
+  group_by: [alertname, severity]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    - matchers: [alertname="Watchdog"]
+      receiver: "null"
+    - matchers: [severity="critical"]
+      receiver: email-critical
+      group_wait: 10s
+      repeat_interval: 1h
+    - matchers: [severity="info"]
+      receiver: email-default
+      repeat_interval: 24h
+
+inhibit_rules:
+  
+  - source_matchers: [severity="critical"]
+    target_matchers: [severity="warning"]
+    equal: [alertname]
+  
+  - source_matchers: [alertname="PostgresDown"]
+    target_matchers: ['alertname=~"PostgresConnectionsHigh|PostgresCacheHitRatioLow|PostgresDeadlocks"']
+  - source_matchers: [alertname="HostDiskCritical"]
+    target_matchers: [alertname="HostDiskAlmostFull"]
+    equal: [mountpoint]
+
+receivers:
+  - name: "null"
+  - name: email-default
+    email_configs:
+      - to: "mohamedibraham770@gmail.com"
+        send_resolved: true
+        headers:
+          Subject: '[{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}] RAG · {{ .GroupLabels.alertname }}'
+  - name: email-critical
+    email_configs:
+      - to: "mohamedibraham770@gmail.com"
+        send_resolved: true
+        headers:
+          Subject: '[{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}] CRITICAL · RAG · {{ .GroupLabels.alertname }}'

@@ -1,0 +1,276 @@
+groups:
+  # ───────────────────────── Stack ─────────────────────────
+  - name: stack
+    rules:
+      - alert: TargetDown
+        expr: up == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "Scrape target {{ $labels.job }} is down"
+          description: "Prometheus cannot scrape {{ $labels.instance }} (job {{ $labels.job }}) for 2 minutes."
+
+  # ───────────────────────── FastAPI ─────────────────────────
+  - name: api
+    rules:
+      - alert: ApiHigh5xxRate
+        expr: |
+          (
+            sum(rate(http_requests_total{status=~"5.."}[5m]))
+            / sum(rate(http_requests_total[5m]))
+          ) > 0.05
+          and sum(rate(http_requests_total[5m])) > 0.1
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "API 5xx error rate is {{ $value | humanizePercentage }}"
+          description: "More than 5% of API requests failed with 5xx over the last 5 minutes (traffic > 0.1 req/s)."
+
+      - alert: ApiLatencyP95High
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket[5m]))) > 3
+          and sum(rate(http_requests_total[5m])) > 0.1
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "API p95 latency is {{ $value | humanizeDuration }}"
+          description: "p95 request latency has stayed above 3s for 10 minutes. Check the 'RAG – FastAPI' dashboard for the slow paths."
+
+  # ───────────────────────── LLM ─────────────────────────
+  - name: llm
+    rules:
+      - alert: LlmAuthFailed
+        expr: sum by (provider) (increase(llm_calls_total{outcome="llm_auth_failed"}[10m])) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "LLM provider {{ $labels.provider }} rejected our credentials"
+          description: "Likely an invalid or revoked API key. Every LLM feature will fail until it is fixed."
+
+      - alert: LlmFailureRateHigh
+        expr: |
+          (
+            sum(rate(llm_calls_total{outcome!="ok"}[10m]))
+            / sum(rate(llm_calls_total[10m]))
+          ) > 0.10
+          and sum(rate(llm_calls_total[10m])) > 0.01
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "LLM final failure rate is {{ $value | humanizePercentage }}"
+          description: "More than 10% of LLM calls ended in failure (after retries) over 10 minutes."
+
+      - alert: LlmTimeouts
+        expr: sum(increase(llm_calls_total{outcome="llm_timeout"}[15m])) >= 3
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value | printf \"%.0f\" }} LLM timeouts in the last 15 minutes"
+          description: "Check LLM_TIMEOUT_SECONDS, prompt sizes and provider latency."
+
+      - alert: LlmRateLimited
+        expr: sum(increase(llm_calls_total{outcome="llm_rate_limited"}[15m])) >= 5
+        labels: { severity: warning }
+        annotations:
+          summary: "LLM provider rate limit hit {{ $value | printf \"%.0f\" }} times in 15 minutes"
+          description: "On free tiers set LLM_REQUESTS_PER_MINUTE so pacing avoids predictable 429s."
+
+      - alert: LlmQueueBacklog
+        expr: sum(llm_waiting) > 5
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value | printf \"%.0f\" }} LLM calls are waiting for a concurrency slot"
+          description: "LLM_MAX_CONCURRENCY is saturated. Raise it (mind provider RPM), lower retries, or move heavy artifacts to background jobs."
+
+      - alert: LlmLatencyNearProxyTimeout
+        expr: histogram_quantile(0.95, sum by (le) (rate(llm_call_duration_seconds_bucket[10m]))) > 200
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "LLM end-to-end p95 is {{ $value | humanizeDuration }} (nginx proxy_read_timeout is 300s)"
+          description: "Users will start seeing 504s from nginx. Queueing plus retries is eating the time budget."
+
+      - alert: LlmInvalidResponses
+        expr: sum(increase(llm_calls_total{outcome="llm_invalid_response"}[1h])) > 10
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value | printf \"%.0f\" }} unusable LLM responses in the last hour"
+          description: "Structured output keeps failing schema validation. Check which operation in the 'RAG – LLM' dashboard."
+
+      - alert: LlmDailyCostOverBudget
+        expr: sum(increase(llm_cost_usd_total[24h])) > 5
+        labels: { severity: warning }
+        annotations:
+          summary: "Estimated LLM cost over the last 24h is ${{ $value | printf \"%.2f\" }}"
+          description: "Above the configured daily budget."
+
+      - alert: LlmUnpricedModel
+        expr: sum by (model) (increase(llm_accounting_gaps_total{reason="unpriced_model"}[1h])) > 0
+        for: 10m
+        labels: { severity: info }
+        annotations:
+          summary: "Model {{ $labels.model }} has no price in llm/pricing.py"
+          description: "Token usage is counted but cost is not. Add the model to PRICING_USD_PER_1M."
+
+  # ───────────────────────── PostgreSQL ─────────────────────────
+  - name: postgres
+    rules:
+      - alert: PostgresDown
+        expr: pg_up == 0
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: "PostgreSQL is not reachable"
+          description: "postgres-exporter cannot connect to the database for 1 minute."
+
+      - alert: PostgresConnectionsHigh
+        expr: sum(pg_stat_database_numbackends) > 160
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value | printf \"%.0f\" }} PostgreSQL connections (limit 200)"
+          description: "Look for 'idle in transaction' sessions and check the app pool size in the 'RAG – Infrastructure' dashboard."
+
+      - alert: PostgresCacheHitRatioLow
+        expr: |
+          (
+            sum(rate(pg_stat_database_blks_hit[10m]))
+            / (sum(rate(pg_stat_database_blks_hit[10m])) + sum(rate(pg_stat_database_blks_read[10m])))
+          ) < 0.90
+          and (sum(rate(pg_stat_database_blks_hit[10m])) + sum(rate(pg_stat_database_blks_read[10m]))) > 100
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "PostgreSQL cache hit ratio is {{ $value | humanizePercentage }}"
+          description: "The working set (including vector indexes) does not fit in shared_buffers / RAM."
+
+      - alert: PostgresDeadlocks
+        expr: sum(increase(pg_stat_database_deadlocks[15m])) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "PostgreSQL deadlocks detected"
+          description: "{{ $value | printf \"%.0f\" }} deadlock(s) in the last 15 minutes."
+
+  # ───────────────────────── Containers ─────────────────────────
+  - name: containers
+    rules:
+      - alert: ContainerOOMKilled
+        expr: sum by (name) (increase(container_oom_events_total{name!=""}[10m])) > 0
+        labels: { severity: critical }
+        annotations:
+          summary: "Container {{ $labels.name }} was OOM-killed"
+          description: "It exceeded its memory limit. Raise the limit or reduce memory use (e.g. embedding model, batch sizes)."
+
+      - alert: ContainerRestarting
+        expr: sum by (name) (changes(container_start_time_seconds{name!=""}[15m])) > 0
+        labels: { severity: warning }
+        annotations:
+          summary: "Container {{ $labels.name }} restarted"
+          description: "Started {{ $value | printf \"%.0f\" }} time(s) in the last 15 minutes."
+
+      - alert: ContainerMemoryNearLimit
+        expr: |
+          sum by (name) (container_memory_working_set_bytes{name!=""})
+          / (sum by (name) (container_spec_memory_limit_bytes{name!=""}) > 0) > 0.90
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "Container {{ $labels.name }} uses {{ $value | humanizePercentage }} of its memory limit"
+          description: "It will be OOM-killed if usage keeps growing."
+
+      - alert: ContainerCpuThrottled
+        expr: |
+          sum by (name) (rate(container_cpu_cfs_throttled_periods_total{name!=""}[5m]))
+          / sum by (name) (rate(container_cpu_cfs_periods_total{name!=""}[5m])) > 0.25
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Container {{ $labels.name }} is CPU-throttled {{ $value | humanizePercentage }} of the time"
+          description: "It keeps hitting its CPU limit."
+
+  # ───────────────────────── Host ─────────────────────────
+  - name: host
+    rules:
+      - alert: HostDiskAlmostFull
+        expr: |
+          max by (mountpoint) (
+            1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|fuse.*|nsfs"}
+              / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs|fuse.*|nsfs"}
+          ) > 0.85
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Disk {{ $labels.mountpoint }} is {{ $value | humanizePercentage }} full"
+          description: "Uploads, the Postgres volume, Prometheus data and Docker images all compete for this space."
+
+      - alert: HostDiskCritical
+        expr: |
+          max by (mountpoint) (
+            1 - node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|fuse.*|nsfs"}
+              / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs|fuse.*|nsfs"}
+          ) > 0.95
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "Disk {{ $labels.mountpoint }} is {{ $value | humanizePercentage }} full"
+          description: "PostgreSQL can stop accepting writes when the disk fills up."
+
+      - alert: HostMemoryHigh
+        expr: (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 0.90
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Host memory usage is {{ $value | humanizePercentage }}"
+          description: "Available memory has been under 10% for 10 minutes."
+
+      - alert: HostCpuHigh
+        expr: (1 - avg(rate(node_cpu_seconds_total{mode="idle"}[5m]))) > 0.90
+        for: 15m
+        labels: { severity: warning }
+        annotations:
+          summary: "Host CPU usage is {{ $value | humanizePercentage }}"
+          description: "Sustained CPU saturation for 15 minutes."
+  - name: rag
+    rules:
+      - alert: IngestionFailuresHigh
+        expr: sum(increase(files_processed_total{status="failed"}[30m])) >= 3
+        labels: { severity: warning }
+        annotations:
+          summary: "{{ $value | printf \"%.0f\" }} file ingestions failed in 30 minutes"
+      - alert: IngestionStuck
+        expr: ingestion_in_progress > 0 and changes(files_processed_total[30m]) == 0
+        for: 30m
+        labels: { severity: warning }
+        annotations:
+          summary: "Ingestion has been running 30m+ with no file finishing"
+      - alert: EmbeddingErrors
+        expr: sum(increase(embedding_errors_total[15m])) > 0
+        labels: { severity: warning }
+        annotations: { summary: "Embedding failures (check GPU OOM / model load)" }
+      - alert: RetrievalMostlyEmpty
+        expr: |
+          sum(rate(rag_empty_retrievals_total{source="chat"}[30m]))
+          / sum(rate(rag_retrieval_duration_seconds_count{source="chat"}[30m])) > 0.3
+          and sum(rate(rag_retrieval_duration_seconds_count{source="chat"}[30m])) > 0.01
+        for: 30m
+        labels: { severity: warning }
+        annotations: { summary: "Over 30% of chat retrievals returned nothing" }
+      - alert: LlmTruncatedResponses
+        expr: sum(increase(llm_finish_reason_total{reason=~"length|MAX_TOKENS"}[1h])) > 5
+        labels: { severity: warning }
+        annotations: { summary: "LLM answers are being truncated (raise max output tokens)" }
+      - alert: DbPoolSaturated
+        expr: db_pool_checked_out / db_pool_capacity > 0.9
+        for: 5m
+        labels: { severity: warning }
+        annotations: { summary: "App DB pool is above 90% utilisation" }
+
+  - name: meta
+    rules:
+      - alert: Watchdog
+        expr: vector(1)
+        labels: { severity: none }
+        annotations: { summary: "Always firing: if you stop receiving this, alerting is broken" }
+      - alert: AlertmanagerNotificationsFailing
+        expr: sum(increase(alertmanager_notifications_failed_total[15m])) > 0
+        labels: { severity: warning }
+        annotations: { summary: "Alertmanager cannot deliver notifications (check SMTP)" }
