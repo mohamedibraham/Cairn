@@ -657,7 +657,7 @@ Switching provider is a configuration change once a provider class is registered
 
 **Mohamed**
 
-* LinkedIn: [your-profile](www.linkedin.com/in/mohamed-ai-engineer)
+* LinkedIn: www.linkedin.com/in/mohamed-ai-engineer
 
 ## License
 
