@@ -1,0 +1,3 @@
+# Exclude test files but preserve the directory
+Backend/tests/*
+!Backend/tests/.gitkeep
