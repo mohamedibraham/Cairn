@@ -36,7 +36,7 @@ Cairn is a platform where users can organize documents into workspaces and proje
 
 ---
 
-[![Watch the demo](path-to-thumbnail.png)]([https://github.com/mohamedibraham/Cairn/releases/download/v1.0/video-compressed.mp4](https://github.com/user-attachments/assets/2c208f25-5ddf-4a3d-bfe2-9f99a18d5f1a))
+https://github.com/user-attachments/assets/2c208f25-5ddf-4a3d-bfe2-9f99a18d5f1a
 
 ---
 
