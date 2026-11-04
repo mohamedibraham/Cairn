@@ -34,11 +34,9 @@
 
 Cairn is a platform where users can organize documents into workspaces and projects, ask questions over any slice of them, get answers whose every claim is traceable to a source page or line range, and generate study and analysis artifacts (quizzes, flashcards, charts, diagrams…) from the same sources. The whole stack (API, database, gateway, metrics, dashboards, alerting) is orchestrated using a single Docker Compose file.
 
+---
 
-<!-- Demo: add the GIF and the video link here once recorded
-![Demo](docs/images/demo.gif)
-▶ Full demo: https://youtu.be/<video-id>
--->
+[![Watch the demo](path-to-thumbnail.png)]([https://github.com/mohamedibraham/Cairn/releases/download/v1.0/video-compressed.mp4](https://github.com/user-attachments/assets/2c208f25-5ddf-4a3d-bfe2-9f99a18d5f1a))
 
 ---
 
@@ -659,8 +657,7 @@ Switching provider is a configuration change once a provider class is registered
 
 **Mohamed**
 
-* GitHub: [@your-username](https://github.com/your-username)
-* LinkedIn: [your-profile](https://www.linkedin.com/in/your-profile)
+* LinkedIn: [your-profile](www.linkedin.com/in/mohamed-ai-engineer)
 
 ## License
 
