@@ -493,8 +493,6 @@ Errors use a consistent envelope (`{"error": {"code", "message", "details"}}`) w
 ├── docs/
 │   ├── assets/           #  images (banner, diagrams, screenshots)
 │   └── postman/          # Postman collection and environment files
-|
-├── Frontend/                 # React UI (Vite dev server proxies /api to nginx) 
 |              
 ├── infrastructure/
 │   ├── docker-compose.yaml
@@ -521,7 +519,6 @@ Errors use a consistent envelope (`{"error": {"code", "message", "details"}}`) w
 
 * Docker and Docker Compose v2
 * An API key for your LLM provider (a Cohere trial key and a Gemini free-tier key are enough for development)
-* Node.js (for the frontend dev server)
 
 ### 1. Configure
 
@@ -551,17 +548,8 @@ Compose project name: `cairn_app`. The first start downloads the embedding model
 | API (through nginx) | http://localhost/api/v1 |
 | Interactive API docs | http://localhost/docs |
 
-### 3. Run the frontend
 
-```bash
-cd Frontend
-npm install
-npm run dev
-```
-
-`Frontend/.env` sets `VITE_API_BASE_URL=/api/v1` (a relative URL), and the Vite dev server proxies `/api` to nginx on `127.0.0.1:80`. The browser therefore only ever talks to one origin and no CORS configuration is involved.
-
-### 4. Add monitoring
+### 3. Add monitoring
 
 ```bash
 cd infrastructure
@@ -574,9 +562,9 @@ docker compose --profile monitoring up -d
 | Prometheus | http://localhost:9090 |
 | Alertmanager | http://localhost:9093 |
 
-Dashboards are provisioned automatically under the **RAG Platform** folder. Monitoring ports are bound to `127.0.0.1` only.
+Dashboards are provisioned automatically under the **Cairn Platform** folder. Monitoring ports are bound to `127.0.0.1` only.
 
-### 5. Email alerts (optional)
+### 4. Email alerts (optional)
 
 1. Edit the SMTP host, sender, login and recipient in `infrastructure/alertmanager/alertmanager.yml`.
 2. Store the SMTP password (for Gmail, an app password) in `infrastructure/secrets/smtp_password.txt` (git-ignored, mounted as a Docker secret).
@@ -588,7 +576,7 @@ curl -XPOST http://localhost:9093/api/v2/alerts -H 'Content-Type: application/js
    "annotations":{"summary":"Test email from Alertmanager"}}]'
 ```
 
-### Production-style run (no dev ports)
+### Production-style run 
 
 ```bash
 cd infrastructure
